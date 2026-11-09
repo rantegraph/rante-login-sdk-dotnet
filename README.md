@@ -126,6 +126,39 @@ var userinfo = await rante.FetchUserInfoAsync(result.AccessToken, expectedSubjec
 
 The access token from the code exchange lasts 15 minutes. FedCM sign-ins return no access token.
 
+## Registering people with their Rante account
+
+A person's first "Sign in with Rante" on your website is their sign-up, like "Sign up with Google". Create your
+website's account from the claims they agreed to share, keyed by `sub`. Every later sign-in finds the same account, so
+your website needs no sign-up form and no password of its own.
+
+```csharp
+// After HandleCallbackAsync (redirect) or ValidateIdTokenAsync (FedCM): these claims are validated.
+var account = await db.Accounts.SingleOrDefaultAsync(a => a.RanteSub == result.Subject);
+if (account is null)
+{
+    account = new Account
+    {
+        RanteSub = result.Subject,
+        Name = result.Claims.GetValueOrDefault("name") as string,
+        Email = result.Claims.GetValueOrDefault("email") as string,
+    };
+    db.Accounts.Add(account);
+    await db.SaveChangesAsync();
+}
+```
+
+- **Key the account on `sub`, never on email.** Email can change, and Rante shares it only once it's verified. If you
+  accept more than one sign-in provider, key on the issuer and `sub` together.
+- **`sub` is pairwise:** the same for every app of your organization, different for other organizations.
+- **Linking an existing account:** have the person sign in to that account first, then store their `sub` on it. Don't
+  link accounts because their emails match.
+- **Ask only for what you need.** You choose the items in the Portal. Optional items may be missing, so give them
+  defaults.
+
+The example does this on every sign-in and shows the result under "Your account on this website". It keeps
+its accounts in memory, so they are gone when the server restarts.
+
 ## API
 
 | | |

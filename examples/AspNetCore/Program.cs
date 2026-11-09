@@ -9,6 +9,7 @@
 // - Either redirect ends at the redirect URI, where HandleCallbackAsync exchanges the code (private_key_jwt or PKCE
 //   alone) and validates the ID token.
 
+using System.Collections.Concurrent;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Encodings.Web;
@@ -245,13 +246,16 @@ app.Lifetime.ApplicationStarted.Register(() =>
 app.Run();
 return 0;
 
-// A new sign-in for the person, in the authentication cookie; the access token (if any) goes in its properties.
+// A new sign-in for the person, in the authentication cookie; the access token (if any) goes in its properties. The
+// sign-in also creates or finds their account on this website.
 static async Task StartSessionAsync(HttpContext context, ValidatedIdToken token, string? accessToken, string method)
 {
+    var (_, created) = Accounts.RegisterOrFind(token.Subject, token.Identity.FindFirst("name")?.Value, token.Identity.FindFirst("email")?.Value);
     var claims = token.Identity.Claims
         .Select(claim => new Claim(claim.Type, claim.Value, claim.ValueType))
         .Append(new Claim(Pages.MethodClaim, method))
-        .Append(new Claim(Pages.SignedInAtClaim, DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")));
+        .Append(new Claim(Pages.SignedInAtClaim, DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")))
+        .Append(new Claim(Pages.NewAccountClaim, created ? "true" : "false"));
     var properties = new AuthenticationProperties();
     if (accessToken is not null)
     {
@@ -265,6 +269,34 @@ static async Task StartSessionAsync(HttpContext context, ValidatedIdToken token,
 
 sealed record FedCmSignIn(string? IdToken);
 
+sealed record ExampleAccount(string Id, string Sub, string? Name, string? Email, DateTimeOffset CreatedAt, DateTimeOffset LastSignInAt);
+
+// This website's own accounts. A person's first "Sign in with Rante" here is their sign-up: the account is created from
+// the claims they agreed to share, and every later sign-in finds it by `sub`. A real website keeps accounts in its
+// database; this example keeps them in memory, so they're gone when the server restarts.
+static class Accounts
+{
+    private static readonly ConcurrentDictionary<string, ExampleAccount> BySub = new(StringComparer.Ordinal);
+
+    public static (ExampleAccount Account, bool Created) RegisterOrFind(string sub, string? name, string? email)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var created = false;
+        var account = BySub.AddOrUpdate(
+            sub,
+            _ =>
+            {
+                created = true;
+                return new ExampleAccount(Guid.NewGuid().ToString(), sub, name, email, now, now);
+            },
+            // Keep the details the person shares this time. Rante shares an email only once it's verified.
+            (_, existing) => existing with { Name = name ?? existing.Name, Email = email ?? existing.Email, LastSignInAt = now });
+        return (account, created);
+    }
+
+    public static ExampleAccount? Find(string? sub) => sub is not null && BySub.TryGetValue(sub, out var account) ? account : null;
+}
+
 static class Keys
 {
     public const string Nonce = "RanteLoginNonce";
@@ -275,6 +307,7 @@ static class Pages
 {
     public const string MethodClaim = "example_sign_in_method";
     public const string SignedInAtClaim = "example_signed_in_at";
+    public const string NewAccountClaim = "example_new_account";
     private const string SdkSrc = "https://login.rante.com/sdk/v1/rante-login.js";
     private const string SdkIntegrity = "sha384-2W12/NktCjRqFuXWiUtHr1yEtdrjBlCRWnJ+//FZMiqd1KRX/K+YMWLoMgF9R7wf";
 
@@ -299,14 +332,16 @@ static class Pages
     {
         var name = user.FindFirst("name")?.Value;
         var rows = Rows(user.Claims
-            .Where(claim => claim.Type is not (MethodClaim or SignedInAtClaim))
+            .Where(claim => claim.Type is not (MethodClaim or SignedInAtClaim or NewAccountClaim))
             .GroupBy(claim => claim.Type)
             .Select(group => (group.Key, string.Join(", ", group.Select(claim => claim.Value)))));
         return Layout("Signed in", $"""
                 <h1>Signed in{(name is null ? "" : $" as {E(name)}")}</h1>
+                <p>Signed in with: <strong>{E(user.FindFirst(MethodClaim)?.Value)}</strong>, {E(user.FindFirst(SignedInAtClaim)?.Value)}</p>
+                {AccountSection(user)}
+                <h2>ID token</h2>
                 <p>This server validated the ID token below. Use <code>sub</code> as the person's ID on this website: it is
                    pairwise, so other organizations' apps see a different value.</p>
-                <p>Signed in with: <strong>{E(user.FindFirst(MethodClaim)?.Value)}</strong>, {E(user.FindFirst(SignedInAtClaim)?.Value)}</p>
                 <table><tbody>{rows}</tbody></table>
                 <p><a href="/userinfo">Show userinfo</a></p>
                 <form method="post" action="/auth/sign-out"><button type="submit">Sign out</button></form>
@@ -333,6 +368,36 @@ static class Pages
                 <p class="error"><code>{E(error.Code)}</code> {E(message)}</p>
                 <p><a href="/">Try again</a></p>
             """), StatusCodes.Status400BadRequest);
+    }
+
+    private static string AccountSection(ClaimsPrincipal user)
+    {
+        var account = Accounts.Find(user.FindFirst("sub")?.Value);
+        if (account is null)
+        {
+            return """
+                <h2>Your account on this website</h2>
+                <p>Not found: this example keeps accounts in memory, and the server has restarted since you signed in. Sign out and
+                   in again.</p>
+                """;
+        }
+
+        var status = user.FindFirst(NewAccountClaim)?.Value == "true"
+            ? "Created at this sign-in from your Rante account: no separate sign-up form, and no password for this website."
+            : "Welcome back: this sign-in found your account by its Rante ID.";
+        return $"""
+            <h2>Your account on this website</h2>
+            <p>{E(status)}</p>
+            <table><tbody>
+              <tr><th>Account ID</th><td>{E(account.Id)}</td></tr>
+              <tr><th>Linked Rante ID (<code>sub</code>)</th><td>{E(account.Sub)}</td></tr>
+              <tr><th>Name</th><td>{E(account.Name ?? "not shared")}</td></tr>
+              <tr><th>Email</th><td>{E(account.Email ?? "not shared (Rante shares an email only once it's verified)")}</td></tr>
+              <tr><th>Created</th><td>{E(account.CreatedAt.ToString("yyyy-MM-ddTHH:mm:ssZ"))}</td></tr>
+              <tr><th>Last sign-in</th><td>{E(account.LastSignInAt.ToString("yyyy-MM-ddTHH:mm:ssZ"))}</td></tr>
+            </tbody></table>
+            <p>This example keeps accounts in memory. A real website stores them in its database, keyed by <code>sub</code>.</p>
+            """;
     }
 
     private static string Rows(IEnumerable<(string Name, string Value)> rows) =>
