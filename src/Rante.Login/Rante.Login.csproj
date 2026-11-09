@@ -10,7 +10,7 @@
     <Authors>Rante Corporation</Authors>
     <Description>"Sign in with Rante" for .NET servers: authorize URL with PKCE, code exchange with private_key_jwt, ID token validation and userinfo, on Microsoft.IdentityModel.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/rante-corporation/rante-login-sdk-dotnet</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/rantegraph/rante-login-sdk-dotnet</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>

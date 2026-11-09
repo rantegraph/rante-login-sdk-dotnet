@@ -7,7 +7,7 @@
 - validates the ID token before you trust who signed in;
 - calls the userinfo endpoint.
 
-It finishes sign-ins started by the [Rante Login browser SDK](https://github.com/rante-corporation/rante-login-sdk)
+It finishes sign-ins started by the [Rante Login browser SDK](https://github.com/rantegraph/rante-login-sdk)
 too, including FedCM sign-ins in Chrome and Edge.
 
 The SDK is a thin layer over
@@ -23,7 +23,7 @@ state, nonce and PKCE values. This SDK works with either.
 The package isn't on NuGet. Reference the project from a clone:
 
 ```sh
-git clone https://github.com/rante-corporation/rante-login-sdk-dotnet
+git clone https://github.com/rantegraph/rante-login-sdk-dotnet
 dotnet add reference rante-login-sdk-dotnet/src/Rante.Login/Rante.Login.csproj
 ```
 
